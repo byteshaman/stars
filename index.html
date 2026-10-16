@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>My stars</title>
+  <style>
+    /* Colors as variables, with a dark variant */
+    :root {
+      --bg: #fff;
+      --fg: #1f2328;
+      --muted: #656d76;
+      --line: #d0d7de;
+      --accent: #0969da;
+      --chip: #f6f8fa;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --muted: #8d96a0;
+        --line: #30363d;
+        --accent: #58a6ff;
+        --chip: #161b22;
+      }
+    }
+
+    body {
+      margin: 0 auto;
+      max-width: 900px;
+      padding: 1.5rem 1rem;
+      background: var(--bg);
+      color: var(--fg);
+      font: 16px/1.5 system-ui, sans-serif;
+    }
+
+    /* Title: centered and uppercase; the superscript keeps its own casing */
+    h1 {
+      font-size: 1.4rem;
+      margin: 0 0 1rem;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    h1 sup {
+      font-size: .5em;
+      font-weight: normal;
+      text-transform: none;
+      color: var(--muted);
+    }
+
+    a {
+      color: var(--accent);
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+      margin-bottom: .75rem;
+    }
+
+    .chip {
+      border: 1px solid var(--line);
+      background: var(--chip);
+      color: var(--fg);
+      border-radius: 99px;
+      padding: .15rem .7rem;
+      font: inherit;
+      font-size: .9rem;
+      cursor: pointer;
+    }
+
+    .chip.on {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--bg);
+    }
+
+    input {
+      flex: 1;
+      min-width: 10rem;
+      font: inherit;
+      padding: .3rem .5rem;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--fg);
+    }
+
+    .repo {
+      border-top: 1px solid var(--line);
+      padding: .8rem 0;
+    }
+
+    .repo .desc {
+      margin: .2rem 0;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: .85rem;
+    }
+
+    .tag {
+      margin-left: .5rem;
+    }
+  </style>
+  <!-- YAML parser, needed to read tags.yml in the browser -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+</head>
+
+<body>
+  <h1>My stars <sup>(vibeclauded)</sup></h1>
+
+  <!-- Tag bar: filled by JS. Selecting several tags always means AND. -->
+  <div class="row" id="tags"></div>
+
+  <!-- Text search -->
+  <div class="row">
+    <input id="q" type="search" placeholder="Search name or description">
+  </div>
+
+  <p class="meta" id="status">Loading...</p>
+  <div id="list"></div>
+
+  <script>
+    // GitHub username: taken from the address (username.github.io).
+    // If you use a custom domain or open the file locally, write your username here instead.
+    const USER = location.hostname.endsWith(".github.io")
+      ? location.hostname.split(".")[0]
+      : "byteshaman";
+
+    let repos = [];                 // starred repos merged with their tags
+    const selected = new Set();     // tags currently selected
+    const $ = id => document.getElementById(id);
+
+    // Fetch all starred repos live from the GitHub API (100 per page)
+    async function loadStars() {
+      const all = [];
+      for (let page = 1; ; page++) {
+        const res = await fetch(`https://api.github.com/users/${USER}/starred?per_page=100&page=${page}`);
+        if (!res.ok) throw new Error("GitHub API returned HTTP " + res.status);
+        const batch = await res.json();
+        all.push(...batch);
+        if (batch.length < 100) return all;   // last page reached
+      }
+    }
+
+    // Read tags.yml and return { "owner/repo" (lowercase): [tags] }
+    async function loadTags() {
+      const res = await fetch("tags.yml", { cache: "no-cache" });
+      if (!res.ok) throw new Error("tags.yml returned HTTP " + res.status);
+      const raw = jsyaml.load(await res.text()) || {};
+      const map = {};
+      for (const [name, tags] of Object.entries(raw)) map[name.toLowerCase()] = tags || [];
+      return map;
+    }
+
+    // Load both sources, then match stars to tags by full name
+    Promise.all([loadStars(), loadTags()])
+      .then(([stars, tagMap]) => {
+        repos = stars.map(r => {
+          const tags = tagMap[r.full_name.toLowerCase()];
+          return {
+            name: r.full_name,
+            url: r.html_url,
+            description: r.description || "",
+            stars: r.stargazers_count,
+            pushed_at: r.pushed_at,
+            archived: r.archived,
+            // Stars without tags land in "untagged" so they are easy to spot
+            tags: tags && tags.length ? tags : ["untagged"],
+          };
+        });
+        renderTags();
+        renderRepos();
+      })
+      .catch(e => { $("status").textContent = "Could not load data: " + e.message; });
+
+    $("q").addEventListener("input", renderRepos);
+
+    // Repo name only, without the owner: "owner/repo" -> "repo"
+    const repoName = r => r.name.split("/")[1];
+
+    // Build the tag bar, most used tags first
+    function renderTags() {
+      const counts = {};
+      repos.forEach(r => r.tags.forEach(t => counts[t] = (counts[t] || 0) + 1));
+      const bar = $("tags");
+      bar.replaceChildren();
+      Object.keys(counts)
+        .sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))
+        .forEach(t => {
+          const b = document.createElement("button");
+          b.className = "chip" + (selected.has(t) ? " on" : "");
+          b.textContent = t + " (" + counts[t] + ")";
+          b.onclick = () => {
+            selected.has(t) ? selected.delete(t) : selected.add(t);
+            renderTags();
+            renderRepos();
+          };
+          bar.append(b);
+        });
+    }
+
+    // Filter, sort and draw the repo list
+    function renderRepos() {
+      const q = $("q").value.toLowerCase();
+      const sel = [...selected];
+
+      const rows = repos.filter(r => {
+        // AND logic: the repo must have every selected tag
+        const tagOk = sel.every(t => r.tags.includes(t));
+        // Text filter
+        const text = (r.name + " " + r.description).toLowerCase();
+        return tagOk && text.includes(q);
+      });
+
+      // Alphabetical by repo name (not owner); full name breaks ties
+      rows.sort((a, b) =>
+        repoName(a).localeCompare(repoName(b), undefined, { sensitivity: "base" }) ||
+        a.name.localeCompare(b.name));
+
+      $("status").textContent = rows.length + " of " + repos.length + " repos";
+
+      const list = $("list");
+      list.replaceChildren();
+      rows.forEach(r => {
+        const el = document.createElement("div");
+        el.className = "repo";
+
+        const a = document.createElement("a");
+        a.href = r.url;
+        a.textContent = r.name + (r.archived ? " (archived)" : "");
+
+        const desc = document.createElement("div");
+        desc.className = "desc";
+        desc.textContent = r.description;
+
+        // Single line: stars, date, then the tags
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = "★ " + r.stars.toLocaleString() + " · " +
+          new Date(r.pushed_at).toLocaleDateString();
+        r.tags.forEach(t => {
+          const s = document.createElement("span");
+          s.className = "tag";
+          s.textContent = "#" + t;
+          meta.append(s);
+        });
+
+        el.append(a, desc, meta);
+        list.append(el);
+      });
+    }
+  </script>
+</body>
+
+</html>
