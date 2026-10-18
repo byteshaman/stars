@@ -80,6 +80,12 @@
       color: var(--bg);
     }
 
+    /* Tags that would lead to 0 results */
+    .chip:disabled {
+      opacity: .4;
+      cursor: not-allowed;
+    }
+
     input {
       flex: 1;
       min-width: 10rem;
@@ -181,13 +187,22 @@
       })
       .catch(e => { $("status").textContent = "Could not load data: " + e.message; });
 
-    $("q").addEventListener("input", renderRepos);
+    // Update both the tag bar (disabled states) and the list while typing
+    $("q").addEventListener("input", () => { renderTags(); renderRepos(); });
 
     // Repo name only, without the owner: "owner/repo" -> "repo"
     const repoName = r => r.name.split("/")[1];
 
+    // True if the repo has every given tag and matches the search text
+    const matches = (r, tags, q) =>
+      tags.every(t => r.tags.includes(t)) &&
+      (r.name + " " + r.description).toLowerCase().includes(q);
+
     // Build the tag bar, most used tags first
     function renderTags() {
+      const q = $("q").value.toLowerCase();
+      const sel = [...selected];
+
       const counts = {};
       repos.forEach(r => r.tags.forEach(t => counts[t] = (counts[t] || 0) + 1));
       const bar = $("tags");
@@ -198,6 +213,8 @@
           const b = document.createElement("button");
           b.className = "chip" + (selected.has(t) ? " on" : "");
           b.textContent = t + " (" + counts[t] + ")";
+          // Disable tags that would lead to 0 results (selected ones stay clickable)
+          b.disabled = !selected.has(t) && !repos.some(r => matches(r, [...sel, t], q));
           b.onclick = () => {
             selected.has(t) ? selected.delete(t) : selected.add(t);
             renderTags();
@@ -212,13 +229,8 @@
       const q = $("q").value.toLowerCase();
       const sel = [...selected];
 
-      const rows = repos.filter(r => {
-        // AND logic: the repo must have every selected tag
-        const tagOk = sel.every(t => r.tags.includes(t));
-        // Text filter
-        const text = (r.name + " " + r.description).toLowerCase();
-        return tagOk && text.includes(q);
-      });
+      // AND logic: the repo must have every selected tag, plus the text filter
+      const rows = repos.filter(r => matches(r, sel, q));
 
       // Alphabetical by repo name (not owner); full name breaks ties
       rows.sort((a, b) =>
