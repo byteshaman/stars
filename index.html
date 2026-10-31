@@ -199,7 +199,7 @@
       tags.every(t => r.tags.includes(t)) &&
       (r.name + " " + r.description).toLowerCase().includes(q);
 
-    // Build the tag bar, most used tags first
+    // Build the tag bar, alphabetical order
     function renderTags() {
       const q = $("q").value.toLowerCase();
       const sel = [...selected];
@@ -209,7 +209,7 @@
       const bar = $("tags");
       bar.replaceChildren();
       Object.keys(counts)
-        .sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))
+        .sort((a, b) => a.localeCompare(b))
         .forEach(t => {
           const b = document.createElement("button");
           b.className = "chip" + (selected.has(t) ? " on" : "");
